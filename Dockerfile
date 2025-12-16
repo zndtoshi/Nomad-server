@@ -1,5 +1,5 @@
 # Build stage
-FROM rust:1.75-slim AS builder
+FROM rustlang/rust:nightly AS builder
 
 WORKDIR /build
 

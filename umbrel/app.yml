@@ -1,35 +1,20 @@
 name: BalanceBridge
 id: balancebridge
 version: 0.1.0
-tagline: Bitcoin balance queries via Nostr
-description: BalanceBridge enables secure Bitcoin balance queries through Nostr protocol. Pair with Android app via QR code and query balances over encrypted Nostr events.
-icon: icon.png
-screenshots: []
 category: Bitcoin
-developer: Nomad Wallet
-website: https://github.com/nomadwallet
-support: https://github.com/nomadwallet/balancebridge/issues
-repo: https://github.com/nomadwallet/balancebridge
 port: 3829
 path: /
-installSize: 100
-requirements:
-  arch:
-    - amd64
-    - arm64
-volumes:
-  - name: data
-    path: /data
-services:
-  - name: balancebridge
-    image: balancebridge:latest
-    ports:
-      - container: 3829
-        host: 3829
-    volumes:
-      - name: data
-        path: /data
-    environment:
-      UMBREL_APP_DATA_DIR: /data
-      UMBREL_APP_ID: balancebridge
+compose:
+  services:
+    balancebridge:
+      image: balancebridge:latest
+      ports:
+        - "3829:3829"
+      volumes:
+        - data:/data
+      environment:
+        UMBREL_APP_DATA_DIR: /data
+        UMBREL_APP_ID: balancebridge
+  volumes:
+    data:
 
