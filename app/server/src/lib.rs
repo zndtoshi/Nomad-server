@@ -7,4 +7,9 @@ pub mod error;
 pub mod identity;
 pub mod relays;
 pub mod qr;
+pub mod protocol;
+pub mod pairing;
+pub mod nostr_handler;
+pub mod electrs;
+pub mod xpub;
 

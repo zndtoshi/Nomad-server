@@ -15,6 +15,9 @@ compose:
       environment:
         UMBREL_APP_DATA_DIR: /data
         UMBREL_APP_ID: balancebridge
+        # Electrs URL - defaults to http://electrs:3002 (Umbrel service name)
+        # Can be overridden to http://localhost:3002 or custom URL
+        ELECTRS_URL: http://electrs:3002
   volumes:
     data:
 
