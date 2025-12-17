@@ -1,5 +1,5 @@
 # Build stage
-FROM rustlang/rust:nightly AS builder
+FROM rust:1.83-bookworm AS builder
 
 WORKDIR /build
 

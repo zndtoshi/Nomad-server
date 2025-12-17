@@ -53,7 +53,27 @@ impl IdentityManager {
     }
     
     fn generate_keys() -> Result<Keys> {
+        // Check for fixed secret key from environment
+        if let Ok(nsec) = std::env::var("BALANCEBRIDGE_SERVER_NSEC") {
+            println!("=== USING FIXED SERVER KEY FROM ENV ===");
+            let keys = Keys::parse(&nsec)?;
+            println!("=== SERVER PUBKEY === {}", keys.public_key().to_string());
+            return Ok(keys);
+        }
+
+        if let Ok(secret_hex) = std::env::var("BALANCEBRIDGE_SERVER_SECRETKEY") {
+            println!("=== USING FIXED SERVER KEY FROM ENV ===");
+            let secret_key = SecretKey::from_hex(&secret_hex)?;
+            let keys = Keys::new(secret_key);
+            println!("=== SERVER PUBKEY === {}", keys.public_key().to_string());
+            return Ok(keys);
+        }
+
+        // Generate ephemeral key with warning
+        println!("=== WARNING: USING EPHEMERAL SERVER KEY ===");
+        println!("=== SET BALANCEBRIDGE_SERVER_NSEC or BALANCEBRIDGE_SERVER_SECRETKEY env var ===");
         let keys = Keys::generate();
+        println!("=== SERVER PUBKEY === {}", keys.public_key().to_string());
         Ok(keys)
     }
     

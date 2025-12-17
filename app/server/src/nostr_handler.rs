@@ -10,8 +10,62 @@ use tracing::{error, info, warn};
 
 use crate::electrs::ElectrsClient;
 use crate::pairing::PairingManager;
-use crate::protocol::{BitcoinLookupRequest, BitcoinLookupResponse};
+use crate::protocol::BitcoinLookupResponse;
 use crate::xpub::{derive_addresses, is_bitcoin_address, is_xpub};
+
+// BalanceBridge event kind (must match Android app)
+// We use the SAME kind in both directions and distinguish by author pubkey.
+pub const BALANCEBRIDGE_REQUEST_KIND: u16 = 30078;
+pub const BALANCEBRIDGE_RESPONSE_KIND: u16 = 30079;
+
+impl NostrHandler {
+    /// Extract request ID from event tags, or generate one deterministically
+    fn extract_request_id(event: &Event) -> String {
+        // Look for ["req", "<request_id>"] tag
+        for tag in event.tags.iter() {
+            if tag.kind() == TagKind::Custom("req".into()) {
+                if let Some(value) = tag.as_slice().get(1) {
+                    return value.to_string();
+                }
+            }
+        }
+
+        // Fallback: generate deterministic ID from event ID
+        format!("req_{}", &event.id.to_hex()[0..16])
+    }
+
+    /// Check if event is a valid BalanceBridge request for this server
+    fn is_balancebridge_request(event: &Event, server_pubkey: &PublicKey) -> Option<String> {
+        let mut req_id: Option<String> = None;
+        let mut p_match = false;
+
+        for tag in event.tags.iter() {
+            let tag_vec = tag.clone().to_vec();
+
+            if tag_vec.len() < 2 {
+                continue;
+            }
+
+            match tag_vec[0].as_str() {
+                "req" => {
+                    req_id = Some(tag_vec[1].clone());
+                }
+                "p" => {
+                    if tag_vec[1] == server_pubkey.to_hex() {
+                        p_match = true;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if p_match {
+            req_id
+        } else {
+            None
+        }
+    }
+}
 
 /// Handles Nostr communication with Android app
 pub struct NostrHandler {
@@ -57,9 +111,20 @@ impl NostrHandler {
 
         // Connect to all relays and wait for completion
         client.connect().await;
+        println!("=== CLIENT CONNECT() CALLED ===");
+        info!("Nostr relays: {}", relay_urls.join(", "));
         info!("Connected to {} relay(s)", added_count);
 
-        let electrs_client = ElectrsClient::new().await?;
+        let electrs_client = match ElectrsClient::new().await {
+            Ok(c) => {
+                info!("Electrs client connected");
+                c
+            }
+            Err(e) => {
+                error!("Electrs unavailable at startup: {}", e);
+                return Err(e);
+            }
+        };
 
         let handler = Self {
             client,
@@ -68,33 +133,32 @@ impl NostrHandler {
             electrs_client,
         };
 
-        // Subscribe immediately on startup (before pairing completes)
-        handler.subscribe_immediately().await?;
+        handler.subscribe_requests().await?;
 
         Ok(handler)
     }
 
-    /// Subscribe immediately on startup (accepts events from past 60 seconds)
-    async fn subscribe_immediately(&self) -> Result<()> {
-        // Calculate timestamp for 60 seconds ago
-        let now = Timestamp::now();
-        let now_secs = now.as_secs();
-        let since_secs = now_secs.saturating_sub(60);
-        let since = Timestamp::from(since_secs);
+    async fn subscribe_requests(&self) -> Result<()> {
+        let ten_minutes_ago = Timestamp::now().as_secs().saturating_sub(600);
 
-        // Create filter: kind 30078, accept events from past 60 seconds
-        // Don't filter by authors yet - accept all temporarily
+        // Broad debug subscription: any kind=30078 from last 10 minutes
         let filter = Filter::new()
-            .kinds(vec![Kind::Custom(30078)])
-            .since(since);
+            .kinds(vec![Kind::Custom(BALANCEBRIDGE_REQUEST_KIND)])
+            .since(Timestamp::from(ten_minutes_ago));
+
+        println!("=== SUBSCRIBE_REQUESTS CALLED ===");
+        println!("=== SUBSCRIBING kind={} since={} ===", BALANCEBRIDGE_REQUEST_KIND, ten_minutes_ago);
 
         self.client.subscribe(filter, None).await?;
-        info!("Subscribed to kind 30078 events (since {} seconds ago)", 60);
+
+        println!("=== SUBSCRIBE_REQUESTS DONE ===");
         Ok(())
     }
 
     /// Start listening for events from the paired Android app
     pub async fn start_listening(&self) -> Result<()> {
+        println!("=== START_LISTENING ENTERED ===");
+
         // Get notification stream (subscription already active from startup)
         let mut notifications = self.client.notifications();
 
@@ -110,40 +174,36 @@ impl NostrHandler {
         // Process incoming events with reconnection handling
         loop {
             match notifications.recv().await {
-                Ok(notification) => {
-                    match notification {
-                        RelayPoolNotification::Event { event, .. } => {
-                            // Log event receipt immediately (before any validation)
-                            info!("Received Nostr event: id={}, pubkey={}", 
-                                event.id.to_hex(), event.pubkey.to_hex());
+                Ok(notification) => match notification {
+                    RelayPoolNotification::Event { event, .. } => {
+                        println!(
+                            "=== NOTIF EVENT RECEIVED === kind={:?} pubkey={} id={} created_at={}",
+                            event.kind,
+                            event.pubkey.to_hex(),
+                            event.id.to_hex(),
+                            event.created_at.as_secs()
+                        );
+                        println!("=== TAGS === {:?}", event.tags);
 
-                            // If paired, validate pubkey matches
-                            if let Some(ref expected_pubkey) = android_pubkey {
-                                if event.pubkey != *expected_pubkey {
-                                    warn!(
-                                        "Event from non-paired pubkey: {} (expected: {})",
-                                        event.pubkey.to_hex(),
-                                        expected_pubkey.to_hex()
-                                    );
-                                    continue;
+                        if event.kind == Kind::Custom(BALANCEBRIDGE_REQUEST_KIND) {
+                            if let Some(req_id) = Self::is_balancebridge_request(&event, &self.keys.public_key()) {
+                                println!("=== VALID BALANCEBRIDGE REQUEST === req_id={}", req_id);
+                                if let Err(e) = self.handle_event(*event).await {
+                                    eprintln!("=== HANDLE_EVENT ERROR === {}", e);
                                 }
-                            }
-
-                            // Handle event (decryption happens inside)
-                            if let Err(e) = self.handle_event(*event).await {
-                                error!("Error handling event: {}", e);
+                            } else {
+                                // Ignore spam
+                                println!("--- ignored kind=30078 (not a BalanceBridge request)");
                             }
                         }
-                        RelayPoolNotification::Message { .. } => {
-                            // Ignore other message types
-                        }
-                        RelayPoolNotification::Shutdown => {
-                            warn!("Relay pool shutdown");
-                            // Continue listening - relay pool will handle reconnection
-                        }
-                        _ => {}
                     }
-                }
+                    RelayPoolNotification::Message { .. } => {
+                        // Ignore other message types
+                    }
+                    RelayPoolNotification::Shutdown => {
+                        warn!("Relay pool shutdown (will reconnect automatically)");
+                    }
+                },
                 Err(e) => {
                     warn!("Error receiving notification: {}", e);
                     // Continue listening - do not exit loop
@@ -211,69 +271,173 @@ impl NostrHandler {
         Ok(())
     }
 
-    /// Handle an incoming event from the paired Android app
+    /// Handle an incoming BalanceBridge request event
     async fn handle_event(&self, event: Event) -> Result<()> {
-        let pubkey_hex = event.pubkey.to_hex();
-        let sender_pubkey_short = format!("{}...{}", 
-            &pubkey_hex[0..8], 
-            &pubkey_hex[pubkey_hex.len()-8..]);
-        
-        // Check expiration (log only, don't reject)
-        self.check_event_expiration(&event)?;
+        info!("=== HANDLE_EVENT ENTERED ===");
+        info!(
+            "Incoming event id={} pubkey={} kind={:?}",
+            event.id,
+            event.pubkey,
+            event.kind
+        );
 
-        // Decrypt the event content (don't reject before decryption)
-        let decrypted = match self
-            .keys
-            .nip44_decrypt(&event.pubkey, &event.content)
-            .await
-        {
-            Ok(msg) => msg,
-            Err(e) => {
-                warn!("Failed to decrypt event from {}: {}", sender_pubkey_short, e);
-                // If not paired, this might be a pairing event
-                if !self.pairing_manager.has_pairing() {
-                    if let Err(e) = self.handle_pairing_event(event).await {
-                        error!("Error handling pairing event: {}", e);
-                    }
-                }
-                return Ok(());
+        // --- Extract req tag ---
+        let mut req_id: Option<String> = None;
+
+        for tag in event.tags.iter() {
+            let parts = tag.clone().to_vec();
+            if parts.len() >= 2 && parts[0] == "req" {
+                req_id = Some(parts[1].clone());
             }
-        };
-
-        info!("Event decrypted successfully from {}", sender_pubkey_short);
-
-        // Try to parse as Bitcoin lookup request
-        let request: BitcoinLookupRequest = match serde_json::from_str(&decrypted) {
-            Ok(req) => req,
-            Err(e) => {
-                warn!("Failed to parse request JSON from {}: {}", sender_pubkey_short, e);
-                return Ok(());
-            }
-        };
-
-        // Validate request
-        if !request.is_valid() {
-            warn!("Invalid Bitcoin lookup request from {}: {:?}", sender_pubkey_short, request);
-            return Ok(());
         }
 
-        // Determine query type
-        let query_type = if crate::xpub::is_xpub(&request.query) {
-            "xpub"
-        } else if crate::xpub::is_bitcoin_address(&request.query) {
-            "address"
-        } else {
-            "unknown"
+        let req_id = match req_id {
+            Some(r) => r,
+            None => {
+                warn!("No req tag found — aborting");
+                return Ok(());
+            }
         };
 
-        info!("Bitcoin lookup started from {}: type={}, query={}", 
-            sender_pubkey_short, query_type, request.query);
+        info!("=== BALANCEBRIDGE REQUEST ACCEPTED === req_id={}", req_id);
+        info!(
+            "=== STEP 1: WILL SEND RESPONSE === req_id={} client_pubkey={}",
+            req_id,
+            event.pubkey
+        );
+        info!("Event content: {}", event.content);
 
-        // Process the request
-        let response = self.process_bitcoin_lookup(&request.query).await?;
+        // --- Parse request JSON ---
+        let parsed: serde_json::Value = match serde_json::from_str(&event.content) {
+            Ok(v) => v,
+            Err(e) => {
+                error!("JSON parse failed: {}", e);
+                return Ok(());
+            }
+        };
 
-        // Send response back
-        self.send_response(event.pubkey, &response).await?;
+        let request_type = parsed
+            .get("type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+
+        info!("Request type = {}", request_type);
+
+        // Extract query from request
+        let query = parsed
+            .get("query")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        println!(
+            "=== STEP 1: LOOKUP START === req_id={} query={}",
+            req_id,
+            query
+        );
+
+        // --- Perform Bitcoin lookup ---
+        let lookup_result = self.process_bitcoin_lookup(query).await;
+
+        // --- Build response payload ---
+        let response_json = match lookup_result {
+            Ok(result) => {
+                println!(
+                    "=== STEP 1: LOOKUP DONE === req_id={} tx_count={}",
+                    req_id,
+                    result.transactions.len()
+                );
+
+                serde_json::json!({
+                    "type": "bitcoin_lookup_response",
+                    "req": req_id,
+                    "status": "ok",
+                    "result": {
+                        "query": result.query,
+                        "confirmed_balance": result.confirmed_balance,
+                        "unconfirmed_balance": result.unconfirmed_balance,
+                        "transactions": result.transactions
+                    }
+                })
+            }
+            Err(e) => {
+                println!(
+                    "=== STEP 1: LOOKUP ERROR === req_id={} error={:?}",
+                    req_id,
+                    e
+                );
+
+                serde_json::json!({
+                    "type": "bitcoin_lookup_response",
+                    "req": req_id,
+                    "status": "error",
+                    "error": e.to_string()
+                })
+            }
+        };
+
+        println!(
+            "=== STEP 2: RESPONSE BUILT === req_id={} payload_size={}",
+            req_id,
+            response_json.to_string().len()
+        );
+
+        info!("Publishing response payload: {}", response_json);
+
+        // --- Build response event ---
+        let mut builder = EventBuilder::new(
+            Kind::Custom(BALANCEBRIDGE_RESPONSE_KIND),
+            response_json.to_string(),
+        );
+
+        // add tags explicitly (nostr-sdk ≥0.44 style)
+        builder = builder
+            .tag(Tag::parse(vec![
+                "p".to_string(),
+                event.pubkey.to_string(),
+            ])?)
+            .tag(Tag::parse(vec![
+                "req".to_string(),
+                req_id.clone(),
+            ])?);
+
+        // sign event
+        let response_event = builder
+            .sign_with_keys(&self.keys)?;
+
+        info!(
+            "Response event built: id={} author={}",
+            response_event.id,
+            response_event.pubkey
+        );
+
+        println!(
+            "=== RESPONSE BUILT === req_id={} kind={:?} pubkey={} tags={:?}",
+            req_id,
+            response_event.kind,
+            response_event.pubkey,
+            response_event.tags
+        );
+
+        // --- Publish response ---
+        println!("=== STEP 2: SENDING RESPONSE === req_id={}", req_id);
+        match self.client.send_event(&response_event).await {
+            Ok(_) => {
+                info!("=== RESPONSE EVENT PUBLISHED SUCCESSFULLY ===");
+                println!(
+                    "=== RESPONSE SENT === req_id={} event_id={}",
+                    req_id,
+                    response_event.id
+                );
+            }
+            Err(e) => {
+                error!("FAILED TO PUBLISH RESPONSE EVENT: {}", e);
+                println!(
+                    "=== RESPONSE SEND ERROR === req_id={} err={:?}",
+                    req_id,
+                    e
+                );
+            }
+        }
 
         Ok(())
     }
@@ -375,16 +539,16 @@ impl NostrHandler {
     }
 
     /// Send a response back to the Android app
-    async fn send_response(&self, recipient: PublicKey, response: &BitcoinLookupResponse) -> Result<()> {
-        let recipient_short = format!("{}...{}", 
-            &recipient.to_hex()[0..8], 
+    async fn send_response(&self, recipient: PublicKey, response: &BitcoinLookupResponse, request_id: &str) -> Result<()> {
+        let recipient_short = format!("{}...{}",
+            &recipient.to_hex()[0..8],
             &recipient.to_hex()[recipient.to_hex().len()-8..]);
 
         let response_json = serde_json::to_string(response)
             .context("Failed to serialize response")?;
 
-        info!("Sending response to Android app ({}): confirmed={} sats, unconfirmed={} sats, tx_count={}", 
-            recipient_short, response.confirmed_balance, response.unconfirmed_balance, response.transactions.len());
+        info!("Sending BalanceBridge response to {} (req_id={}): confirmed={} sats, unconfirmed={} sats, tx_count={}",
+            recipient_short, request_id, response.confirmed_balance, response.unconfirmed_balance, response.transactions.len());
 
         // Encrypt the response
         let encrypted = match self.keys.nip44_encrypt(&recipient, &response_json).await {
@@ -395,8 +559,12 @@ impl NostrHandler {
             }
         };
 
-        // Create unsigned event
-        let unsigned = EventBuilder::new(Kind::Custom(30078), encrypted)
+        // Create unsigned event with proper tags
+        let unsigned = EventBuilder::new(Kind::Custom(BALANCEBRIDGE_RESPONSE_KIND), encrypted)
+            .tags(vec![
+                Tag::public_key(recipient),  // "p" tag with recipient pubkey
+                Tag::parse(["req", request_id])?, // "req" tag
+            ])
             .build(self.keys.public_key());
 
         // Sign the event
@@ -405,11 +573,11 @@ impl NostrHandler {
 
         match self.client.send_event(&event).await {
             Ok(_) => {
-                info!("Response sent successfully to {}", recipient_short);
+                info!("Published BalanceBridge response: req_id={}, client_pubkey={}", request_id, recipient_short);
                 Ok(())
             }
             Err(e) => {
-                error!("Failed to send response to {}: {}", recipient_short, e);
+                error!("Failed to publish BalanceBridge response to {}: {}", recipient_short, e);
                 Err(anyhow::anyhow!("Failed to send event: {}", e))
             }
         }

@@ -3,11 +3,11 @@ use rustls::crypto::ring::default_provider;
 use tracing::{error, info, warn};
 
 use axum::{
-    routing::{get, post},
+    routing::get,
     Router,
     response::{IntoResponse, Response},
     http::{StatusCode, header},
-    extract::Json,
+    Json,
 };
 use tokio::net::TcpListener;
 use std::net::SocketAddr;
@@ -31,6 +31,8 @@ fn install_crypto_provider() {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    println!("=== BALANCEBRIDGE MAIN STARTED ===");
+
     install_crypto_provider();
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -53,7 +55,7 @@ async fn main() -> Result<()> {
         .context("Failed to init pairing manager")?;
 
     // Generate QR code for pairing
-    let payload = qr::PairingPayload::new(pubkey, relay_list.clone());
+    let payload = qr::PairingPayload::new(pubkey.clone(), relay_list.clone());
     let pairing_json = payload.to_json()?;
     let qr_svg = payload.generate_qr_svg()?;
 
@@ -61,11 +63,19 @@ async fn main() -> Result<()> {
     let qr_svg_clone = qr_svg.clone();
 
     // Start Nostr handler in background task
+    info!("Server pubkey: {}", pubkey);
+    info!("BalanceBridge request kind: {}", crate::nostr_handler::BALANCEBRIDGE_REQUEST_KIND);
+    info!("BalanceBridge response kind: {}", crate::nostr_handler::BALANCEBRIDGE_RESPONSE_KIND);
+    info!("Nostr relays: {}", relay_list.join(", "));
+
     let pairing_manager_clone = pairing_manager.clone();
     let keys_clone = keys.clone();
     let relay_list_clone = relay_list.clone();
-    tokio::spawn(async move {
-        info!("Starting Nostr handler...");
+    info!("Spawning Nostr handler task");
+
+    let nostr_task = tokio::spawn(async move {
+        println!("=== NOSTR TASK STARTED ===");
+
         match nostr_handler::NostrHandler::new(
             keys_clone,
             pairing_manager_clone,
@@ -74,13 +84,20 @@ async fn main() -> Result<()> {
         .await
         {
             Ok(handler) => {
+                println!("=== NOSTR HANDLER INITIALIZED ===");
                 if let Err(e) = handler.start_listening().await {
-                    error!("Nostr handler error: {}", e);
+                    eprintln!("Nostr handler exited with error: {}", e);
                 }
             }
             Err(e) => {
-                error!("Failed to start Nostr handler: {}", e);
+                eprintln!("Failed to start Nostr handler: {}", e);
             }
+        }
+    });
+
+    tokio::spawn(async move {
+        if let Err(e) = nostr_task.await {
+            eprintln!("Nostr task panicked: {:?}", e);
         }
     });
 
@@ -91,8 +108,6 @@ async fn main() -> Result<()> {
     info!("Electrs client initialized successfully");
 
     let electrs_client_health = Arc::clone(&electrs_client);
-    let electrs_client_lookup = Arc::clone(&electrs_client);
-    let electrs_client_lookup_alt = Arc::clone(&electrs_client);
 
     let app = Router::new()
         .route("/", get(|| async { "BalanceBridge is running" }))
@@ -113,20 +128,6 @@ async fn main() -> Result<()> {
                         (StatusCode::SERVICE_UNAVAILABLE, "Electrs unavailable")
                     }
                 }
-            }
-        }))
-        .route("/bitcoin_lookup", post(move |body: Json<protocol::BitcoinLookupRequest>| {
-            let electrs_client = Arc::clone(&electrs_client_lookup);
-            async move {
-                info!("HTTP POST /bitcoin_lookup request received: {:?}", body.0);
-                handle_bitcoin_lookup_with_client(body.0, &electrs_client).await
-            }
-        }))
-        .route("/lookup", post(move |body: Json<protocol::BitcoinLookupRequest>| {
-            let electrs_client = Arc::clone(&electrs_client_lookup_alt);
-            async move {
-                info!("HTTP POST /lookup request received: {:?}", body.0);
-                handle_bitcoin_lookup_with_client(body.0, &electrs_client).await
             }
         }));
 
@@ -213,28 +214,6 @@ async fn handle_bitcoin_lookup_with_client(
     info!("Sending HTTP response: size={} bytes", response_json.len());
 
     (StatusCode::OK, Json(response)).into_response()
-}
-
-/// Legacy function for backward compatibility (creates its own client)
-async fn handle_bitcoin_lookup(
-    request: protocol::BitcoinLookupRequest,
-) -> Response {
-    // Create Electrs client (for backward compatibility)
-    let electrs_client = match electrs::ElectrsClient::new().await {
-        Ok(client) => client,
-        Err(e) => {
-            error!("Failed to create Electrs client: {}", e);
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({
-                    "error": format!("Failed to initialize Electrs client: {}", e)
-                })),
-            )
-                .into_response();
-        }
-    };
-
-    handle_bitcoin_lookup_with_client(request, &electrs_client).await
 }
 
 /// Process a Bitcoin lookup request (using Electrum TCP protocol)

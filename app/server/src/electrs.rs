@@ -10,12 +10,13 @@ pub struct ElectrsClient {
 
 impl ElectrsClient {
     pub async fn new() -> Result<Self> {
-        let url = std::env::var("ELECTRS_URL")
-            .unwrap_or_else(|_| "tcp://electrs_electrs_1:50001".to_string());
+        // Umbrel-safe default: localhost
+        let addr = std::env::var("ELECTRS_ADDR")
+            .unwrap_or_else(|_| "127.0.0.1:50001".to_string());
 
-        info!("Using Electrs URL: {}", url);
+        info!("Connecting to Electrs at {}", addr);
 
-        let client = Client::new(&url)
+        let client = Client::new(&format!("tcp://{}", addr))
             .map_err(|e| anyhow!("Failed to connect to Electrs: {}", e))?;
 
         Ok(Self { client })
