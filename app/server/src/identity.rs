@@ -1,114 +1,52 @@
 //! Nostr identity management
-//! 
+//!
 //! Handles generation and persistence of Nostr keypairs for the Umbrel node.
 
-use anyhow::{Context, Result};
-use nostr_sdk::prelude::*;
-use std::path::{Path, PathBuf};
+use nostr_sdk::{Keys, SecretKey};
 use std::fs;
+use std::path::Path;
 
-const KEYS_FILENAME: &str = "nostr_keys.json";
+const DATA_DIR: &str = "/data";
+const KEY_FILE: &str = "/data/nostr_secret.hex";
 
-/// Manages the Umbrel node's Nostr identity
-pub struct IdentityManager {
-    keys: Keys,
-    keys_path: PathBuf,
-}
+pub fn load_or_create_keys() -> Keys {
+    fs::create_dir_all(DATA_DIR).ok();
 
-impl IdentityManager {
-    /// Initialize identity manager, loading or creating keys
-    /// 
-    /// The data_dir should be the Umbrel app data directory where
-    /// persistent data is stored (typically /umbrel/app-data/[app-id]/data)
-    pub fn new(data_dir: impl AsRef<Path>) -> Result<Self> {
-        let data_dir = data_dir.as_ref();
-        let keys_path = data_dir.join(KEYS_FILENAME);
-        
-        // Ensure data directory exists (Umbrel should create it, but be safe)
-        fs::create_dir_all(data_dir)
-            .context("Failed to create/access Umbrel data directory")?;
-        
-        let keys = if keys_path.exists() {
-            Self::load_keys(&keys_path)?
-        } else {
-            let new_keys = Self::generate_keys()?;
-            Self::save_keys(&keys_path, &new_keys)?;
-            new_keys
-        };
-        
-        Ok(Self {
-            keys,
-            keys_path,
-        })
-    }
-    
-    /// Get the Nostr keys
-    pub fn keys(&self) -> &Keys {
-        &self.keys
-    }
-    
-    /// Get the public key as hex string
-    pub fn public_key_hex(&self) -> String {
-        self.keys.public_key().to_hex()
-    }
-    
-    fn generate_keys() -> Result<Keys> {
-        // Check for fixed secret key from environment
-        if let Ok(nsec) = std::env::var("BALANCEBRIDGE_SERVER_NSEC") {
-            println!("=== USING FIXED SERVER KEY FROM ENV ===");
-            let keys = Keys::parse(&nsec)?;
-            println!("=== SERVER PUBKEY === {}", keys.public_key().to_string());
-            return Ok(keys);
-        }
+    if Path::new(KEY_FILE).exists() {
+        let hex_str = fs::read_to_string(KEY_FILE)
+            .expect("Failed to read nostr secret key file")
+            .trim()
+            .to_string();
 
-        if let Ok(secret_hex) = std::env::var("BALANCEBRIDGE_SERVER_SECRETKEY") {
-            println!("=== USING FIXED SERVER KEY FROM ENV ===");
-            let secret_key = SecretKey::from_hex(&secret_hex)?;
-            let keys = Keys::new(secret_key);
-            println!("=== SERVER PUBKEY === {}", keys.public_key().to_string());
-            return Ok(keys);
-        }
+        let bytes = hex::decode(&hex_str)
+            .expect("Invalid hex in nostr_secret.hex");
 
-        // Generate ephemeral key with warning
-        println!("=== WARNING: USING EPHEMERAL SERVER KEY ===");
-        println!("=== SET BALANCEBRIDGE_SERVER_NSEC or BALANCEBRIDGE_SERVER_SECRETKEY env var ===");
-        let keys = Keys::generate();
-        println!("=== SERVER PUBKEY === {}", keys.public_key().to_string());
-        Ok(keys)
-    }
-    
-    fn load_keys(path: &Path) -> Result<Keys> {
-        let content = fs::read_to_string(path)
-            .context("Failed to read keys file")?;
-        
-        let json: serde_json::Value = serde_json::from_str(&content)
-            .context("Invalid keys file format")?;
-        
-        let secret_key_hex = json.get("secret_key")
-            .and_then(|v| v.as_str())
-            .context("Missing secret_key in keys file")?;
-        
-        let secret_key = SecretKey::from_hex(secret_key_hex)
-            .context("Invalid secret key format")?;
-        
+        let secret_key = SecretKey::from_slice(&bytes)
+            .expect("Invalid secret key bytes");
+
         let keys = Keys::new(secret_key);
-        
-        Ok(keys)
-    }
-    
-    fn save_keys(path: &Path, keys: &Keys) -> Result<()> {
-        let json = serde_json::json!({
-            "secret_key": keys.secret_key().to_secret_hex(),
-            "public_key": keys.public_key().to_hex(),
-        });
-        
-        let content = serde_json::to_string_pretty(&json)
-            .context("Failed to serialize keys")?;
-        
-        fs::write(path, content)
-            .context("Failed to write keys file")?;
-        
-        Ok(())
+
+        log::info!(
+            "Loaded persisted Nostr pubkey: {}",
+            keys.public_key().to_hex()
+        );
+
+        keys
+    } else {
+        let keys = Keys::generate();
+
+        let secret = keys.secret_key();
+        let hex_str = hex::encode(secret.as_secret_bytes());
+
+        fs::write(KEY_FILE, &hex_str)
+            .expect("Failed to persist nostr secret key");
+
+        log::info!(
+            "Generated NEW Nostr pubkey (persisted): {}",
+            keys.public_key().to_hex()
+        );
+
+        keys
     }
 }
 

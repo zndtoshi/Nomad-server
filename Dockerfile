@@ -36,6 +36,9 @@ RUN chmod +x /app/balancebridge-server
 # Create data directory
 RUN mkdir -p /data && chmod 755 /data
 
+# Persist data volume
+VOLUME ["/data"]
+
 # Expose port 3829
 EXPOSE 3829
 

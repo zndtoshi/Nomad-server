@@ -4,20 +4,30 @@ version: 0.1.0
 category: Bitcoin
 port: 3829
 path: /
+
 compose:
   services:
     balancebridge:
-      image: balancebridge:latest
+      image: zenderady/balancebridge:latest
+      restart: unless-stopped
+
       ports:
         - "3829:3829"
+
       volumes:
         - data:/data
+
+      networks:
+        - umbrel_main_network
+
       environment:
         UMBREL_APP_DATA_DIR: /data
         UMBREL_APP_ID: balancebridge
-        # Electrs URL - defaults to http://electrs:3002 (Umbrel service name)
-        # Can be overridden to http://localhost:3002 or custom URL
-        ELECTRS_URL: http://electrs:3002
+        ELECTRS_ADDR: electrs:50001
+
   volumes:
     data:
 
+  networks:
+    umbrel_main_network:
+      external: true
