@@ -1,12 +1,12 @@
 {
-  "id": "balancebridge",
-  "name": "BalanceBridge App Store",
+  "id": "nomad-server",
+  "name": "NomadServer App Store",
   "apps": [
     {
-      "id": "balancebridge",
-      "name": "BalanceBridge",
+      "id": "nomad-server",
+      "name": "NomadServer",
       "description": "Bitcoin balance queries via Nostr",
-      "repo": "https://github.com/zndtoshi/umbrel-balancebridge",
+      "repo": "https://github.com/zndtoshi/nomad-server",
       "path": "umbrel"
     }
   ]

@@ -1,11 +1,11 @@
 [package]
-name = "balancebridge-server"
+name = "nomad-server"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [[bin]]
-name = "balancebridge-server"
+name = "nomad-server"
 path = "src/main.rs"
 
 [dependencies]

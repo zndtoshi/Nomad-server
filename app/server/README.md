@@ -1,6 +1,6 @@
 # Server
 
-Rust backend server for BalanceBridge Umbrel app.
+Rust backend server for NomadServer.
 
 ## Responsibilities
 
@@ -35,7 +35,7 @@ Rust backend server for BalanceBridge Umbrel app.
 ### In Umbrel Container
 
 The server runs inside an Umbrel container. Umbrel sets:
-- `UMBREL_APP_DATA_DIR` - Persistent data directory (e.g., `/umbrel/app-data/balancebridge/data`)
+- `UMBREL_APP_DATA_DIR` - Persistent data directory (e.g., `/umbrel/app-data/nomad-server/data`)
 - `UMBREL_APP_ID` - App identifier
 
 All persistent data (keys, QR codes) is stored in the Umbrel app data directory.
@@ -44,7 +44,7 @@ All persistent data (keys, QR codes) is stored in the Umbrel app data directory.
 
 ```bash
 # For local testing, defaults to ./data
-cargo run --bin balancebridge-server
+cargo run --bin nomad-server
 ```
 
 ## Output
@@ -57,7 +57,7 @@ On first run, the server will:
 
 The QR code contains:
 - `version`: 1
-- `app`: "umbrel-balancebridge"
+- `app`: "nomad-server"
 - `nodePubkey`: The node's Nostr public key (hex)
 - `relays`: List of public relay URLs
 

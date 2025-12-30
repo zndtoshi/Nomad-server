@@ -1,7 +1,7 @@
-# BalanceBridge End-to-End Test Plan
+# NomadServer End-to-End Test Plan
 
 ## Overview
-This document provides step-by-step instructions for testing the BalanceBridge Umbrel app end-to-end, including Bitcoin lookup requests from the Android app to the Rust server.
+This document provides step-by-step instructions for testing NomadServer end-to-end, including Bitcoin lookup requests from the NomadWallet app to the Rust server.
 
 ---
 
@@ -31,24 +31,24 @@ environment:
 
 ```bash
 # Navigate to your Umbrel app directory
-cd /path/to/umbrel-balancebridge
+cd /path/to/nomad-server
 
 # Rebuild the Docker image (if code changed)
-docker build -t balancebridge:latest .
+docker build -t nomad-server:latest .
 
 # Restart the app via Umbrel UI, or if you have direct access:
 # Stop the container
-docker stop balancebridge
+docker stop nomad-server
 
 # Start the container
-docker start balancebridge
+docker start nomad-server
 ```
 
 ### View Logs
 
 ```bash
-# Tail logs from the BalanceBridge container
-docker logs -f balancebridge
+# Tail logs from the NomadServer container
+docker logs -f nomad-server
 
 # Or if using Umbrel's app management:
 # Logs are typically available in Umbrel UI under the app's "Logs" tab
@@ -56,10 +56,10 @@ docker logs -f balancebridge
 
 ### Test Electrs Connectivity
 
-**From inside the BalanceBridge container:**
+**From inside the NomadServer container:**
 ```bash
 # Enter the container
-docker exec -it balancebridge /bin/sh
+docker exec -it nomad-server /bin/sh
 
 # Test Electrs connectivity
 curl http://electrs:3002/
@@ -117,7 +117,7 @@ tpubD6NzVbkrYhZ4XHndKkuB8FifXm8r5FQHwrN6oZuWCz13qb93rtgKTCdQ5wLZQDiU6Kj2n6TdkV6V
 ### On Server Startup
 
 ```
-BalanceBridge Umbrel Server starting...
+NomadServer starting...
 Using data dir: /data
 Electrs client initialized with URL: http://electrs:3002
 Electrs URL can be overridden via ELECTRS_URL environment variable
@@ -206,7 +206,7 @@ Failed to connect to Electrs
 docker ps | grep electrs
 
 # Test connectivity from container
-docker exec -it balancebridge curl http://electrs:3002/
+docker exec -it nomad-server curl http://electrs:3002/
 
 # Try alternative URL
 # Update ELECTRS_URL in umbrel/app.yml to http://localhost:3002
@@ -271,14 +271,14 @@ Invalid Bitcoin lookup request
 ### Prerequisites
 1. Umbrel node running with Bitcoin node synced
 2. Electrs service running and accessible
-3. BalanceBridge app installed and running on Umbrel
+3. NomadServer app installed and running on Umbrel
 4. Android app installed and paired with Umbrel node
 
 ### Test Steps
 
 1. **Start the server and verify logs:**
    ```bash
-   docker logs -f balancebridge
+   docker logs -f nomad-server
    ```
    Wait for: "Server ready. Waiting for Android app pairing..."
 

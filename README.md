@@ -1,6 +1,6 @@
-# BalanceBridge Umbrel App
+# NomadServer
 
-Umbrel app for BalanceBridge - communicates with Android via Nostr protocol.
+Bitcoin server for NomadWallet - communicates with mobile wallet via Nostr protocol.
 
 ## Structure
 
@@ -26,7 +26,7 @@ cargo build --release
 ## Running
 
 ```bash
-cargo run --bin balancebridge-server
+cargo run --bin nomad-server
 ```
 
 ## Development

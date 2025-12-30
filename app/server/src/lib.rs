@@ -1,6 +1,6 @@
-//! BalanceBridge Server Library
+//! NomadServer Library
 //! 
-//! Core server functionality for the BalanceBridge Umbrel app.
+//! Core server functionality for NomadServer.
 
 pub mod config;
 pub mod error;

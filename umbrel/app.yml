@@ -1,5 +1,5 @@
-name: BalanceBridge
-id: balancebridge
+name: NomadServer
+id: nomad-server
 version: 0.1.0
 category: Bitcoin
 port: 3829
@@ -7,8 +7,8 @@ path: /
 
 compose:
   services:
-    balancebridge:
-      image: zenderady/balancebridge:latest
+    nomad-server:
+      image: zenderady/nomad-server:latest
       restart: unless-stopped
 
       ports:
@@ -22,7 +22,7 @@ compose:
 
       environment:
         UMBREL_APP_DATA_DIR: /data
-        UMBREL_APP_ID: balancebridge
+        UMBREL_APP_ID: nomad-server
         ELECTRS_ADDR: electrs:50001
 
   volumes:

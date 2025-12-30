@@ -1,4 +1,4 @@
-//! Error types for the BalanceBridge server
+//! Error types for NomadServer
 
 use thiserror::Error;
 

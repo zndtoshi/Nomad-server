@@ -14,7 +14,7 @@ COPY Cargo.toml ./
 COPY app/server ./app/server
 
 # Build the binary in release mode
-RUN cargo build --release --bin balancebridge-server
+RUN cargo build --release --bin nomad-server
 
 # Runtime stage
 FROM debian:bookworm-slim
@@ -28,10 +28,10 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy the binary from builder
-COPY --from=builder /build/target/release/balancebridge-server /app/balancebridge-server
+COPY --from=builder /build/target/release/nomad-server /app/nomad-server
 
 # Ensure binary is executable
-RUN chmod +x /app/balancebridge-server
+RUN chmod +x /app/nomad-server
 
 # Create data directory
 RUN mkdir -p /data && chmod 755 /data
@@ -44,8 +44,8 @@ EXPOSE 3829
 
 # Set environment variables (can be overridden by Umbrel)
 ENV UMBREL_APP_DATA_DIR=/data
-ENV UMBREL_APP_ID=balancebridge
+ENV UMBREL_APP_ID=nomad-server
 
 # Run the server
-CMD ["/app/balancebridge-server"]
+CMD ["/app/nomad-server"]
 

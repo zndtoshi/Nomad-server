@@ -36,7 +36,7 @@ impl NostrState {
     }
 }
 
-pub async fn run_balancebridge_nostr_loop(
+pub async fn run_nomadserver_nostr_loop(
     client: Arc<Client>,
     electrs: Arc<ElectrsClient>,
 ) -> Result<()> {
@@ -52,7 +52,7 @@ pub async fn run_balancebridge_nostr_loop(
         .custom_tag(SingleLetterTag::lowercase(Alphabet::P), server_pk_hex.clone());
 
     client.subscribe(filter, None).await?;
-    log::info!("BB_NOSTR: subscribed to kind=30078 p={}", server_pk_hex);
+    log::info!("NS_NOSTR: subscribed to kind=30078 p={}", server_pk_hex);
 
     // IMPORTANT: keep a receiver and do NOT crash on lag
     let mut notifications = client.notifications();
@@ -61,7 +61,7 @@ pub async fn run_balancebridge_nostr_loop(
         let notif = match notifications.recv().await {
             Ok(n) => n,
             Err(broadcast::error::RecvError::Lagged(n)) => {
-                log::warn!("BB_NOSTR: notifications lagged by {}; continuing", n);
+                log::warn!("NS_NOSTR: notifications lagged by {}; continuing", n);
                 continue;
             }
             Err(e) => {
@@ -71,15 +71,15 @@ pub async fn run_balancebridge_nostr_loop(
 
         if let RelayPoolNotification::Event { event, .. } = notif {
             if let Err(e) =
-                handle_balancebridge_event(client.clone(), electrs.clone(), *event).await
+                handle_nomadserver_event(client.clone(), electrs.clone(), *event).await
             {
-                log::error!("BB_NOSTR: handler error: {e:?}");
+                log::error!("NS_NOSTR: handler error: {e:?}");
             }
         }
     }
 }
 
-async fn handle_balancebridge_event(
+async fn handle_nomadserver_event(
     client: Arc<Client>,
     electrs: Arc<ElectrsClient>,
     event: Event,
@@ -110,7 +110,7 @@ async fn handle_balancebridge_event(
     let req_id = req_id.ok_or_else(|| anyhow!("missing req tag"))?;
 
     log::info!(
-        "BB_NOSTR: received request req={} from={} query={}",
+        "NS_NOSTR: received request req={} from={} query={}",
         req_id,
         event.pubkey.to_string(),
         query
@@ -134,7 +134,7 @@ async fn handle_balancebridge_event(
     // Publish
     client.send_event(&signed).await?;
 
-    log::info!("BB_NOSTR: published response req={} kind=30079", req_id);
+    log::info!("NS_NOSTR: published response req={} kind=30079", req_id);
 
     Ok(())
 }

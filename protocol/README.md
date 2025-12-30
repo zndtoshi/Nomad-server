@@ -1,6 +1,6 @@
 # Protocol
 
-Nostr protocol definitions and utilities for BalanceBridge communication.
+Nostr protocol definitions and utilities for NomadServer communication.
 
 This module will contain:
 - Nostr event type definitions

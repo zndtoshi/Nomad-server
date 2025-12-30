@@ -3,7 +3,7 @@ use qrcode::QrCode;
 use qrcode::render::svg;
 use serde::{Deserialize, Serialize};
 
-const APP_IDENTIFIER: &str = "umbrel-balancebridge";
+const APP_IDENTIFIER: &str = "nomad-server";
 const VERSION: u32 = 1;
 
 #[derive(Debug, Serialize, Deserialize)]

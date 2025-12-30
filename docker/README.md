@@ -1,6 +1,6 @@
 # Docker
 
-Docker configuration files for containerizing the BalanceBridge Umbrel app.
+Docker configuration files for containerizing NomadServer.
 
 This module will contain:
 - Dockerfile(s)

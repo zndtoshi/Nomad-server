@@ -231,6 +231,147 @@ impl ElectrsClient {
             }
         }
     }
+
+    /// Broadcast raw transaction (BLOCKING)
+    fn broadcast_transaction_blocking(&self, tx_hex: &str) -> Result<String> {
+        self.rate_limit();
+
+        let raw_tx = hex::decode(tx_hex)
+            .map_err(|e| anyhow!("Invalid hex: {}", e))?;
+
+        // Validate transaction format (deserialize to check it's valid)
+        let _tx: electrum_client::bitcoin::Transaction = electrum_client::bitcoin::consensus::encode::deserialize(&raw_tx)
+            .map_err(|e| anyhow!("Invalid transaction: {}", e))?;
+
+        let txid = self.client.transaction_broadcast_raw(&raw_tx)?;
+
+        Ok(txid.to_string())
+    }
+
+    /// Estimate fees for fast/medium/slow (BLOCKING)
+    /// Returns (fast, medium, slow) in sat/vB
+    fn estimate_fees_blocking(&self) -> Result<(u64, u64, u64)> {
+        self.rate_limit();
+
+        // Electrum estimate_fee returns BTC/kB, we need sat/vB
+        // Call for 1 block (fast), 6 blocks (medium), 12 blocks (slow)
+        
+        let fast_btc_per_kb = self.client.estimate_fee(1)?;
+        let medium_btc_per_kb = self.client.estimate_fee(6)?;
+        let slow_btc_per_kb = self.client.estimate_fee(12)?;
+
+        // Convert BTC/kB -> sat/vB
+        // 1 BTC/kB = 100,000,000 sat / 1000 vB = 100,000 sat/vB
+        let to_sat_vb = |btc_per_kb: f64| -> u64 {
+            let sat_per_vb = btc_per_kb * 100_000.0;
+            sat_per_vb.max(1.0) as u64 // Minimum 1 sat/vB
+        };
+
+        let fast = to_sat_vb(fast_btc_per_kb);
+        let medium = to_sat_vb(medium_btc_per_kb);
+        let slow = to_sat_vb(slow_btc_per_kb);
+
+        Ok((fast, medium, slow))
+    }
+
+    /// Get UTXOs for multiple addresses (BLOCKING)
+    fn get_utxos_blocking(&self, addresses: &[String]) -> Result<Vec<crate::nostr_handler::UtxoInfo>> {
+        use crate::nostr_handler::UtxoInfo;
+
+        let mut all_utxos = Vec::new();
+
+        for address in addresses {
+            self.rate_limit();
+
+            let addr = Address::from_str(address)?.require_network(Network::Bitcoin)?;
+            let script: ScriptBuf = addr.script_pubkey();
+
+            let utxos = self.client.script_list_unspent(&script)?;
+
+            // Get current blockchain height for confirmation calculation
+            let current_height = match self.client.block_headers_subscribe() {
+                Ok(header) => header.height as u32,
+                Err(_) => 0, // Fallback if subscription fails
+            };
+
+            for utxo in utxos {
+                let confirmations = if utxo.height > 0 {
+                    current_height.saturating_sub(utxo.height as u32)
+                } else {
+                    0 // Unconfirmed (mempool)
+                };
+
+                all_utxos.push(UtxoInfo {
+                    txid: utxo.tx_hash.to_string(),
+                    vout: utxo.tx_pos as u32,
+                    value: utxo.value,
+                    address: address.clone(),
+                    confirmations,
+                });
+            }
+        }
+
+        Ok(all_utxos)
+    }
+
+    /// Broadcast transaction (async wrapper)
+    pub async fn broadcast_transaction(&self, tx_hex: &str) -> Result<String> {
+        use tokio::task::spawn_blocking;
+
+        self.check_cooldown()?;
+        let _permit = self.gate.acquire().await.unwrap();
+        self.check_cooldown()?;
+
+        let hex = tx_hex.to_string();
+        let this = self.clone();
+
+        let res = spawn_blocking(move || this.broadcast_transaction_blocking(&hex)).await;
+
+        match res {
+            Ok(Ok(txid)) => Ok(txid),
+            Ok(Err(e)) => Err(anyhow!("Broadcast error: {}", e)),
+            Err(e) => Err(anyhow!("Broadcast join error: {}", e)),
+        }
+    }
+
+    /// Estimate fees (async wrapper)
+    pub async fn estimate_fees(&self) -> Result<(u64, u64, u64)> {
+        use tokio::task::spawn_blocking;
+
+        self.check_cooldown()?;
+        let _permit = self.gate.acquire().await.unwrap();
+        self.check_cooldown()?;
+
+        let this = self.clone();
+
+        let res = spawn_blocking(move || this.estimate_fees_blocking()).await;
+
+        match res {
+            Ok(Ok(fees)) => Ok(fees),
+            Ok(Err(e)) => Err(anyhow!("Fee estimation error: {}", e)),
+            Err(e) => Err(anyhow!("Fee estimation join error: {}", e)),
+        }
+    }
+
+    /// Get UTXOs (async wrapper)
+    pub async fn get_utxos(&self, addresses: &[String]) -> Result<Vec<crate::nostr_handler::UtxoInfo>> {
+        use tokio::task::spawn_blocking;
+
+        self.check_cooldown()?;
+        let _permit = self.gate.acquire().await.unwrap();
+        self.check_cooldown()?;
+
+        let addrs = addresses.to_vec();
+        let this = self.clone();
+
+        let res = spawn_blocking(move || this.get_utxos_blocking(&addrs)).await;
+
+        match res {
+            Ok(Ok(utxos)) => Ok(utxos),
+            Ok(Err(e)) => Err(anyhow!("UTXO fetch error: {}", e)),
+            Err(e) => Err(anyhow!("UTXO join error: {}", e)),
+        }
+    }
 }
 
 fn preflight_tcp(addr: &str) -> Result<()> {
