@@ -29,6 +29,34 @@ cargo build --release
 cargo run --bin nomad-server
 ```
 
+## Docker
+
+### Running with Docker on Umbrel
+
+To run NomadServer as a Docker container on your Umbrel node:
+
+```bash
+docker run -d \
+  --name nomadserver \
+  --network umbrel_main_network \
+  -p 3829:3829 \
+  -e ELECTRS_ADDR=electrs:50001 \
+  -e RUST_LOG=info \
+  -v nomadserver-data:/data \
+  zenderady/nomad-server:latest
+```
+
+**Parameters:**
+- `--name nomadserver` - Container name
+- `--network umbrel_main_network` - Connects to Umbrel's main network
+- `-p 3829:3829` - Exposes port 3829 for the web interface
+- `-e ELECTRS_ADDR=electrs:50001` - Electrs server address
+- `-e RUST_LOG=info` - Logging level
+- `-v nomadserver-data:/data` - Persistent data volume
+- `zenderady/nomad-server:latest` - Docker image
+
+After starting, access the web interface at `http://your-umbrel-ip:3829`
+
 ## Development
 
 ```bash
